@@ -1,163 +1,209 @@
 ---
 name: acpx-peers
-description: Collaborate with external AI agents (Codex, Kimi) via acpx for review, delegation, consultation, and pairing. Use when seeking external validation, delegating development tasks, getting unstuck on debugging or architecture, or wanting a persistent collaboration partner. Replaces codex-audit and multi-audit skills.
+description: Use when a spec, plan, or completed implementation needs external peer review via acpx, especially when follow-up rounds may be needed.
 ---
 
 # acpx-peers
 
-External AI agents are **colleagues with different perspectives**, not superior authorities. Their value is in surfacing blind spots and providing alternative approaches -- not enforcing checklists.
+Peer review with external AI agents via `acpx` CLI. They are colleagues — not authorities.
 
-## Core Principles
+## Core Rules
 
-1. **Code Sovereignty** -- External agents NEVER write to the filesystem. All modifications by Claude only.
-2. **Colleague, Not Authority** -- Claude can disagree with any agent's output.
-3. **Parallel by Default** -- When using both agents, run them simultaneously.
-4. **Background Required** -- ALL `acpx` commands use `run_in_background: true`. Non-negotiable.
-5. **Filter, Don't Relay** -- Claude curates results; irrelevant findings are dropped silently.
+1. **Run acpx commands asynchronously** — don't block your main thread. In Claude Code use `run_in_background: true`; in other harnesses use the equivalent non-blocking mechanism.
+2. **Use `--format quiet`** on prompt/exec commands for clean output. Session management commands (`sessions ensure/list/close`) don't need it.
+3. **Code sovereignty** — external agents never write to the filesystem.
+4. **Reference files by path** — peer agents can read local files. Just tell them which file to review instead of pasting content into the prompt.
+5. **Use sessions** — multi-round is the default. Use `exec` only for simple one-off questions that don't need follow-up.
+6. **Never call yourself.** Pick peers that are different agents from you. See agent selection below.
 
-## Available Agents
+## Agent Selection
 
-| Agent | Model | Strength |
-|-------|-------|----------|
-| codex | gpt-5.3-codex (high reasoning) | General dev, reasoning, code review, debugging |
-| kimi | K2.5 (262k context) | Large context review, alternative perspective |
+You are one of the agents in the acpx network. **Choose peers, not yourself:**
 
----
+| If you are... | Your peers are |
+|---------------|---------------|
+| Claude Code | `codex`, `kimi` |
+| Codex | `claude`, `kimi` |
+| Gemini | `codex`, `claude`, `kimi` |
+| Kimi | `codex`, `claude` |
 
-## Modes
+Available agents and their strengths:
 
-### Mode 1: Review
+| Agent | Default Model | Strength |
+|-------|--------------|----------|
+| codex | gpt-5.4 (high reasoning) | General dev, reasoning, code review, debugging |
+| claude | Claude (Opus/Sonnet) | Architecture, nuanced analysis, long context |
+| kimi | K2.5 (262k context) | Large docs, alternative perspective |
 
-Peer review of plans, code, or implementations. Replaces codex-audit and multi-audit.
+Agents use their own local config by default. acpx does not override — it passes through to whatever model the agent is configured to use.
 
-**Sub-modes:** `plan`, `code`, `post-exec`, `debate`
+### Codex Model/Reasoning Override
 
-**Required blocks** (see [prompt-templates.md](./references/prompt-templates.md)):
-- Project Context Block
-- Severity Calibration Block
-- Claude's Pre-Assessment Block
+Override the default model or reasoning level per command:
 
-**Workflow:**
-1. Claude fills shared blocks (Project Context, Severity, Pre-Assessment)
-2. Build prompt from template in [prompt-templates.md](./references/prompt-templates.md)
-3. Execute via acpx (see [cli-patterns.md](./references/cli-patterns.md)):
-   - Single model: `acpx --format quiet codex exec [--file .acpx-peers/prompt.md | 'inline']`
-   - Dual model: parallel calls to codex + kimi, both `run_in_background: true`
-4. Synthesize results per [synthesis-workflow.md](./references/synthesis-workflow.md)
-5. Present curated findings to user
+```bash
+# Use a different model
+acpx --model gpt-5.4 codex exec 'prompt'
 
-**Debate sub-mode** uses named sessions instead of file-based rounds:
-1. Create sessions: `acpx codex -s debate-<date>`, `acpx kimi -s debate-<date>`
-2. Each round sends prompt to both sessions (context auto-retained)
-3. Max 3 rounds, exit when converged or trade-off identified
-4. Close sessions when done
+# Set reasoning level within a session
+acpx codex set thought_level high -s <session-name>
+```
 
-**Post-Execution Quick-Fix Path:** After post-exec audit, Claude can auto-fix consensus items and report. See [synthesis-workflow.md](./references/synthesis-workflow.md).
+Codex reasoning levels: `low`, `medium` (default), `high`, `extra_high`.
 
----
+Global flags go **before** the agent name:
 
-### Mode 2: Delegate
+```bash
+acpx --format quiet --model gpt-5.4 codex -s review-auth-0323 --file .acpx-peers/prompt.md
+```
 
-Assign development tasks to external agents. Claude specifies, agent produces, Claude reviews and integrates.
-
-**Use cases:**
-- Write unit tests for a module
-- Generate API documentation
-- Prototype alternative implementations
-- Create migration scripts
-- Produce boilerplate (CRUD, schemas, config)
-
-**Workflow:**
-1. Claude writes a Task Specification (see [prompt-templates.md](./references/prompt-templates.md) Delegate Template)
-2. Execute: `acpx --format quiet codex exec --file .acpx-peers/delegate-task.md`
-3. Claude reviews output through quality gate (see [synthesis-workflow.md](./references/synthesis-workflow.md))
-4. Claude integrates selectively -- adapts to project conventions, discards what doesn't fit
-5. Claude runs tests to verify
-
-**Key rule:** Delegate output is a **suggestion**. Claude always reviews, adapts, and writes the final code.
+In all examples below, `<peer>` means whichever agent you chose — substitute accordingly.
 
 ---
 
-### Mode 3: Consult
+## Workflow: Multi-Round Review
 
-Ask for help when Claude is stuck or uncertain. Lightweight, focused Q&A.
+### Step 1: Open Session
 
-**Use cases:**
-- Debugging: stuck after 3+ attempts on same error
-- Architecture: choosing between competing approaches
-- Unfamiliar tech: need idiomatic patterns for a library/framework
-- Performance: need help interpreting profiling output
+Use a unique name per review to avoid mixing contexts with old sessions:
 
-**Workflow:**
-1. Claude formulates a focused question with context (see [prompt-templates.md](./references/prompt-templates.md) Consult Template)
-2. Execute: `acpx --format quiet codex exec 'question with context'` (usually short enough for inline)
-3. Claude evaluates the answer, applies if useful
-4. No formal synthesis -- just direct application of the insight
+```bash
+acpx <peer> sessions ensure --name review-<topic>-<date>
+```
 
-**No shared blocks needed.** Consult is lightweight: question + context + what would help.
+`ensure` is idempotent — creates if new, reuses if exists.
+
+### Step 2: Send First Round
+
+Peer agents have local filesystem access — just point them to the file:
+
+```bash
+acpx --format quiet <peer> -s review-<topic>-<date> 'We are building [one sentence].
+Phase: [prototype | MVP | production].
+
+Review docs/specs/my-design.md. Focus on:
+1. Real risks at this phase
+2. Blind spots we likely missed
+
+Skip style nitpicks and out-of-scope features.'
+```
+
+For long or complex prompts, write to a file and use `--file` to send. Note: `--file` sends the file **content** as the prompt text — it does not tell the peer to read that path.
+
+```bash
+mkdir -p .acpx-peers
+# Write your prompt to .acpx-peers/prompt.md, then:
+acpx --format quiet <peer> -s review-<topic>-<date> --file .acpx-peers/prompt.md
+```
+
+Wait for the response before proceeding (in Claude Code: `TaskOutput` with `block: true, timeout: 600000`).
+
+That's it. No severity calibration blocks. No pre-assessment templates. The document is already on disk — let the reviewer read it.
+
+### Step 3: Evaluate Response
+
+Read the review. For each finding, decide:
+
+| Assessment | Action |
+|-----------|--------|
+| Agree + important | Fix it |
+| Agree + minor | Note for later |
+| Disagree | Push back in next round |
+| Irrelevant | Ignore |
+
+### Step 4: Fix, Then Continue Conversation
+
+Fix what you agree with. Then tell the reviewer what you did:
+
+```bash
+acpx --format quiet <peer> -s review-<topic>-<date> 'Fixed the following:
+- [issue 1]: [what you changed]
+- [issue 2]: [what you changed]
+
+Disagreed on [issue 3] because [reason].
+
+Anything else you see?'
+```
+
+If you need to send a long follow-up, use `--file`:
+
+```bash
+mkdir -p .acpx-peers
+# Write follow-up to .acpx-peers/round2.md, then:
+acpx --format quiet <peer> -s review-<topic>-<date> --file .acpx-peers/round2.md
+```
+
+### Step 5: Repeat Until Consensus
+
+Continue the conversation until:
+- Reviewer says "looks good" or equivalent
+- All substantive issues are resolved
+- Remaining disagreements are acknowledged trade-offs
+
+If after 3-4 rounds you still disagree on substantive issues, stop and ask the user to decide. Don't loop indefinitely.
+
+Typical reviews take 2-3 rounds.
+
+### Step 6: Close Session
+
+```bash
+acpx <peer> sessions close review-<topic>-<date>
+rm -f .acpx-peers/prompt.md .acpx-peers/round*.md
+```
 
 ---
 
-### Mode 4: Pair
+## When to Use
 
-Persistent named session for ongoing multi-turn collaboration on a complex task.
+| Workflow Stage | Trigger | What to Review |
+|---------------|---------|---------------|
+| After brainstorming | Spec/design doc written | The spec document |
+| After writing-plans | Plan document written | The plan document |
+| After executing-plans | Implementation complete | Code diff or key files |
 
-**Use cases:**
-- Extended debugging session requiring back-and-forth
-- Collaborative architecture design exploration
-- Working through a complex refactoring together
+### When NOT to Use
 
-**Workflow:**
-1. Start: `acpx codex sessions new --name pair-<topic>`
-2. First prompt: `acpx --format quiet codex -s pair-<topic> 'initial context and question'`
-3. Continue: `acpx --format quiet codex -s pair-<topic> 'follow-up based on answer'`
-4. End: `acpx codex sessions close pair-<topic>`
+- Simple single-file edits or bug fixes
+- User explicitly asked to skip review
+- Trivial changes that don't need a second opinion
 
-**Pair vs Debate:** Pair is collaborative (working together toward a goal). Debate is adversarial (stress-testing a position with opposing perspectives).
+---
+
+## Dual-Model Review
+
+For high-stakes reviews (security, architecture), run two peers in parallel:
+
+```bash
+acpx <peer1> sessions ensure --name review-<topic>-<date>
+acpx <peer2> sessions ensure --name review-<topic>-<date>
+
+# Send to both — run these asynchronously
+acpx --format quiet <peer1> -s review-<topic>-<date> --file .acpx-peers/prompt.md
+acpx --format quiet <peer2> -s review-<topic>-<date> --file .acpx-peers/prompt.md
+```
+
+Wait for both to respond before synthesizing. If both flag the same issue, high confidence. If they disagree, use your judgment or ask the user.
+
+Follow-up rounds work the same — send to both sessions.
 
 ---
 
 ## CLI Quick Reference
 
-All commands: `run_in_background: true` + `--format quiet`.
+```bash
+# Session management
+acpx <peer> sessions ensure --name <name>     # Create or reuse
+acpx <peer> sessions list                      # List active sessions
+acpx <peer> sessions close <name>              # Clean up
 
-| Action | Command |
-|--------|---------|
-| One-shot inline | `acpx --format quiet codex exec 'prompt'` |
-| One-shot file | `acpx --format quiet codex exec --file .acpx-peers/prompt.md` |
-| Parallel dual | Two background calls (codex + kimi) with same prompt |
-| Named session | `acpx --format quiet codex -s <name> 'prompt'` |
-| Close session | `acpx codex sessions close <name>` |
+# Send message (within session, use --format quiet)
+acpx --format quiet <peer> -s <name> 'inline prompt'
+acpx --format quiet <peer> -s <name> --file path/to/prompt.md
 
-Prompt < ~2000 chars → inline. Longer → `--file`. See [cli-patterns.md](./references/cli-patterns.md).
-
----
-
-## Auto-Trigger Conditions
-
-| Condition | Mode | Action |
-|-----------|------|--------|
-| Complex plan (5+ steps) | review:plan | Suggest |
-| Security-sensitive code | review:code | Suggest |
-| Plan pipeline completed | review:post-exec | Suggest |
-| Architecture trade-off | review:debate | Suggest |
-| Unfamiliar technology | consult | Suggest |
-| Large boilerplate needed | delegate | Suggest |
-| **Debugging loop (3+ failed attempts)** | **consult** | **Auto-use** |
-
-Only the debugging loop triggers auto-use. All others: suggest first, act on user approval. See [auto-trigger-rules.md](./references/auto-trigger-rules.md).
-
----
-
-## Runtime Files
-
+# One-shot (no session, for simple one-off questions)
+acpx --format quiet <peer> exec 'quick question'
+acpx --format quiet <peer> exec --file .acpx-peers/prompt.md
 ```
-.acpx-peers/
-  prompt.md          # Temp prompt (overwritten, not accumulated)
-  delegate-task.md   # Temp delegation spec (overwritten)
-```
-
-No response files. acpx returns output to stdout, captured by Bash tool.
 
 ---
 
@@ -165,9 +211,7 @@ No response files. acpx returns output to stdout, captured by Bash tool.
 
 | Situation | Action |
 |-----------|--------|
-| Agent timeout | Report to user, suggest retry or other agent |
-| Unhelpful response | Claude evaluates independently, proceeds with own judgment |
-| One agent fails (dual-model) | Fall back to single-model with the successful one |
-| Both agents fail | Report errors, ask user how to proceed |
-
-Never kill a background task without asking the user first.
+| Agent timeout | Retry once, then report to user |
+| Unhelpful response | Proceed with own judgment |
+| One agent fails (dual-model) | Continue with the other |
+| Session lost (TTL expired) | Create new session, resend context |
