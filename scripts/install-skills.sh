@@ -103,9 +103,9 @@ install_link() {
 }
 
 for target in "${TARGETS[@]}"; do
-    validate_target "$target"
-done
-
-for target in "${TARGETS[@]}"; do
-    install_link "$target"
+    if validate_target "$target"; then
+        install_link "$target"
+    else
+        echo "Skipped: $target (remove it manually to re-link)"
+    fi
 done
