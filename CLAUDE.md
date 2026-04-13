@@ -4,19 +4,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-A skill design and maintenance repository for AI coding agents (Claude Code, OpenAI Codex CLI, Gemini CLI). The work here is authoring, refining, and organizing skills — not building an application.
+A config repository for AI coding agents (Claude Code, OpenAI Codex CLI). Manages custom skills, rules, and harness configs using **Thin Harness, Fat Skills** architecture.
+
+Plugin-provided skills (compound-engineering, gstack) are NOT in this repo — they're managed by their respective plugins.
 
 ## Repository Structure
 
 ```
-skills/       → One directory per skill (SKILL.md + optional references/scripts)
-commands/     → Slash commands invoked via /name (e.g., /plan, /tdd, /code-review)
-rules/        → Global rules auto-loaded into every agent session
-  common/     → Language-agnostic (git, testing, security, coding style)
-  python/     → Python-specific
-  typescript/ → TypeScript-specific
-scripts/      → install-skills.sh symlinks skills/ to ~/.claude, ~/.codex, ~/.gemini
+library/      -> Custom skills (60 dirs, each with SKILL.md + optional references/)
+rules/        -> Global rules auto-loaded into Claude Code sessions
+  common/     -> Language-agnostic (git, testing, security, coding style)
+  python/     -> Python-specific
+  typescript/ -> TypeScript-specific
+hosts/        -> Thin harness configs per agent
+  claude.md   -> Installed to ~/.claude/CLAUDE.md
+  codex.md    -> Installed to ~/.codex/AGENTS.md
+manifests/    -> Per-agent skill selection
+  codex-include.txt -> Whitelist of Codex-compatible skills
+scripts/      -> install.sh manages per-agent per-skill symlinks
 ```
+
+## Installation
+
+```bash
+# Install (creates per-skill symlinks + copies harness configs)
+scripts/install.sh install
+
+# Preview without changes
+scripts/install.sh install --dry-run
+
+# Check current state
+scripts/install.sh status
+
+# Remove all managed symlinks
+scripts/install.sh uninstall
+```
+
+### What install.sh does
+
+- **Claude**: Symlinks each skill from `library/` to `~/.claude/skills/`, plus gstack from `$GSTACK_PATH`. Copies `hosts/claude.md` to `~/.claude/CLAUDE.md`.
+- **Codex**: Symlinks only skills listed in `manifests/codex-include.txt`. Copies `hosts/codex.md` to `~/.codex/AGENTS.md`.
+- **Gemini**: Removes old symlink (no longer managed).
 
 ## SKILL.md Format
 
@@ -33,22 +61,15 @@ Instructions in markdown...
 
 ### Claude Code Frontmatter
 
-| Field | Purpose |
-|-------|---------|
-| `description` | **Required** — agents auto-load skills by matching this to the current task |
-| `name` | Display name and `/slash-command` name; defaults to directory name |
-| `disable-model-invocation` | `true` = user-only via `/name`, agent won't auto-trigger |
-| `user-invocable` | `false` = hidden from `/` menu, only agent can invoke |
-| `allowed-tools` | Restrict available tools when skill is active |
-| `context` | `fork` = run in isolated sub-agent |
-| `agent` | Sub-agent type when `context: fork` (`Explore`, `Plan`, etc.) |
-
-### Codex Frontmatter
-
-Codex discovers skills from `.agents/skills/`. Optional `agents/openai.yaml` can specify:
-- `display_name`, `short_description` — UI metadata
-- `allow_implicit_invocation: false` — disable auto-matching
-- `dependencies.tools` — required MCP tools
+| Field                      | Purpose                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `description`              | **Required** — agents auto-load skills by matching this to the current task |
+| `name`                     | Display name and `/slash-command` name; defaults to directory name          |
+| `disable-model-invocation` | `true` = user-only via `/name`, agent won't auto-trigger                    |
+| `user-invocable`           | `false` = hidden from `/` menu, only agent can invoke                       |
+| `allowed-tools`            | Restrict available tools when skill is active                               |
+| `context`                  | `fork` = run in isolated sub-agent                                          |
+| `agent`                    | Sub-agent type when `context: fork` (`Explore`, `Plan`, etc.)               |
 
 ## Skill Quality Criteria
 
@@ -59,25 +80,16 @@ When creating or updating skills:
 3. **Self-contained** — skills load in isolation without surrounding context.
 4. **Imperative voice** — "Review the code", not "This skill reviews code".
 5. **One workflow per skill** — split broad topics into focused modules.
-6. **Include a "When to Activate" section** — list concrete trigger scenarios (see `python-testing` as example).
+6. **Include a "When to Activate" section** — list concrete trigger scenarios.
 7. **Code examples over prose** — agents learn patterns better from examples than descriptions.
 8. **Test in a fresh session** — invoke the skill in a new agent session to verify behavior.
 
-## Command Format (commands/*.md)
+## Adding a New Skill
 
-```markdown
----
-description: Brief description shown in /help
----
-
-# Command Name
-
-## What This Command Does
-## When to Use
-## Workflow
-```
-
-Commands differ from skills: commands are always user-invoked via `/name`, skills can be auto-triggered by the agent.
+1. Create `library/<skill-name>/SKILL.md` with frontmatter
+2. If Codex-compatible (no Claude-specific tools), add to `manifests/codex-include.txt`
+3. Run `scripts/install.sh install` to update symlinks
+4. Test in a fresh Claude Code session
 
 ## Rules (rules/*.md)
 
@@ -89,4 +101,4 @@ Rules are always-on constraints loaded into every session. Unlike skills, they h
 
 - Skills are invoked via `Skill` tool in Claude Code, never `Read` directly
 - The `acpx-peers` skill requires all `acpx` commands to use `run_in_background: true`
-- When adding a skill, also consider whether it should have a corresponding `/command` entry
+- Harness files (`hosts/*.md`) start with `<!-- managed by puquan-config -->` — edit in repo, not in `~/.claude/`

@@ -167,3 +167,9 @@ posts/
 .release-artifacts/
 .worktrees/
 youtube-transcript/
+
+# Codex local state
+library/.system/
+
+# gstack plugin (installed separately, symlinked by install.sh)
+library/gstack
