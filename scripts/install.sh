@@ -25,14 +25,16 @@ DRY_RUN=false
 # --- Helpers ---
 usage() {
     cat <<'EOF'
-Usage: scripts/install.sh [install|uninstall|status] [--dry-run]
+Usage: scripts/install.sh [install|uninstall|status|clean] [--dry-run]
 
 Manage per-agent skill symlinks and harness configs.
 
 Commands:
   install    Create per-skill symlinks and copy harness configs (default)
   uninstall  Remove all managed symlinks and harness configs
-  status     Show current link state without changes
+  status     Show current link state and detect pollution
+  clean      Remove unmanaged entries from skills directories
+             (e.g. leftover dirs from gstack setup or plugin installs)
 
 Options:
   -n, --dry-run  Print planned actions without executing
@@ -54,7 +56,13 @@ log() {
 
 is_managed_symlink() {
     local path="$1"
-    [[ -L "$path" ]] && [[ "$(readlink "$path")" == "$LIBRARY_DIR/"* || "$(readlink "$path")" == "$GSTACK_PATH"* ]]
+    if [[ ! -L "$path" ]]; then
+        return 1
+    fi
+    local dest
+    dest="$(readlink "$path")"
+    # Managed if pointing to library/, gstack root, or gstack sub-dirs
+    [[ "$dest" == "$LIBRARY_DIR/"* || "$dest" == "$GSTACK_PATH" || "$dest" == "$GSTACK_PATH/"* ]]
 }
 
 is_managed_harness() {
@@ -162,19 +170,43 @@ do_install() {
     done
     log "Linked $claude_count custom skills"
 
-    # Symlink gstack
-    if [[ -d "$GSTACK_PATH" ]]; then
-        local gstack_target="$CLAUDE_SKILLS/gstack"
-        if [[ -L "$gstack_target" && "$(readlink "$gstack_target")" == "$GSTACK_PATH" ]]; then
-            log "gstack already linked"
-        else
-            [[ -L "$gstack_target" ]] && run rm "$gstack_target"
-            [[ -d "$gstack_target" ]] && log "WARNING: $gstack_target is a directory, skipping gstack" || {
-                run ln -s "$GSTACK_PATH" "$gstack_target"
-                log "Linked gstack: $gstack_target -> $GSTACK_PATH"
-            }
-        fi
-    else
+    # Symlink gstack sub-skills (per-skill, not whole-repo)
+    local gstack_manifest="$MANIFESTS_DIR/gstack-skills.txt"
+    if [[ -d "$GSTACK_PATH" && -f "$gstack_manifest" ]]; then
+        local gstack_count=0
+        while IFS= read -r name || [[ -n "$name" ]]; do
+            [[ -z "$name" || "$name" == \#* ]] && continue
+
+            # 'gstack' entry points to the repo root (meta-skill)
+            # all others point to sub-directories
+            local source
+            if [[ "$name" == "gstack" ]]; then
+                source="$GSTACK_PATH"
+            else
+                source="$GSTACK_PATH/$name"
+            fi
+
+            if [[ ! -d "$source" ]]; then
+                log "WARNING: gstack skill not found: $name"
+                continue
+            fi
+
+            local target="$CLAUDE_SKILLS/$name"
+            if [[ -L "$target" && "$(readlink "$target")" == "$source" ]]; then
+                gstack_count=$((gstack_count + 1))
+                continue
+            fi
+            # Remove stale symlink or conflicting real directory
+            [[ -L "$target" ]] && run rm "$target"
+            if [[ -d "$target" && ! -L "$target" ]]; then
+                run rm -rf "$target"
+                log "Replaced unmanaged directory: $name"
+            fi
+            run ln -s "$source" "$target"
+            gstack_count=$((gstack_count + 1))
+        done < "$gstack_manifest"
+        log "Linked $gstack_count gstack skills"
+    elif [[ ! -d "$GSTACK_PATH" ]]; then
         log "WARNING: gstack not found at $GSTACK_PATH (set GSTACK_PATH to override)"
     fi
 
@@ -280,15 +312,28 @@ do_uninstall() {
         done
         log "Removed $removed managed symlinks"
 
-        # Remove gstack symlink
+        # Remove gstack symlinks
+        local gstack_removed=0
+        for link in "$CLAUDE_SKILLS"/*/; do
+            link="${link%/}"
+            [[ -L "$link" ]] || continue
+            local dest
+            dest="$(readlink "$link")"
+            if [[ "$dest" == "$GSTACK_PATH" || "$dest" == "$GSTACK_PATH/"* ]]; then
+                run rm "$link"
+                gstack_removed=$((gstack_removed + 1))
+            fi
+        done
+        # Also check the gstack entry itself (not a subdir)
         if [[ -L "$CLAUDE_SKILLS/gstack" ]]; then
             local dest
             dest="$(readlink "$CLAUDE_SKILLS/gstack")"
-            if [[ "$dest" == "$GSTACK_PATH"* ]]; then
+            if [[ "$dest" == "$GSTACK_PATH" ]]; then
                 run rm "$CLAUDE_SKILLS/gstack"
-                log "Removed gstack symlink"
+                gstack_removed=$((gstack_removed + 1))
             fi
         fi
+        log "Removed $gstack_removed gstack symlinks"
     fi
 
     # Restore harness if managed
@@ -332,11 +377,9 @@ do_status() {
         broken=$(find "$CLAUDE_SKILLS" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null | wc -l | tr -d ' ')
         echo "  skills: $total symlinks ($managed managed, $broken broken)"
 
-        if [[ -L "$CLAUDE_SKILLS/gstack" ]]; then
-            echo "  gstack: -> $(readlink "$CLAUDE_SKILLS/gstack")"
-        else
-            echo "  gstack: NOT LINKED"
-        fi
+        local gstack_count
+        gstack_count=$(find "$CLAUDE_SKILLS" -maxdepth 1 -type l -exec readlink {} \; 2>/dev/null | grep -c "^$GSTACK_PATH" || true)
+        echo "  gstack skills: $gstack_count (from $GSTACK_PATH)"
     else
         echo "  skills: NOT FOUND"
     fi
@@ -395,7 +438,130 @@ do_status() {
     echo "  skills: $(find "$LIBRARY_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
 
     echo ""
+    echo "=== Pollution Check ==="
+    local has_pollution=false
+    detect_pollution "$CLAUDE_SKILLS" "Claude skills"
+    [[ ${#POLLUTION_ENTRIES[@]} -gt 0 ]] && has_pollution=true
+    detect_pollution "$CODEX_SKILLS" "Codex skills"
+    [[ ${#POLLUTION_ENTRIES[@]} -gt 0 ]] && has_pollution=true
+    if [[ "$has_pollution" == "false" ]]; then
+        echo "  All clean"
+    else
+        echo "  Run 'scripts/install.sh clean' to remove unmanaged entries"
+    fi
+
+    echo ""
     check_unlisted_skills
+}
+
+# --- Detect unmanaged entries (pollution) ---
+# Returns entries via the POLLUTION_ENTRIES array
+detect_pollution() {
+    local target_dir="$1"
+    local label="$2"
+    POLLUTION_ENTRIES=()
+
+    [[ -d "$target_dir" ]] || return
+
+    for item in "$target_dir"/*/; do
+        item="${item%/}"
+        local name
+        name="$(basename "$item")"
+
+        # Skip hidden dirs (.system, etc.)
+        [[ "$name" == .* ]] && continue
+
+        # Skip our managed symlinks (pointing to library/ or gstack)
+        if [[ -L "$item" ]]; then
+            local dest
+            dest="$(readlink "$item")"
+            if [[ "$dest" == "$LIBRARY_DIR/"* || "$dest" == "$GSTACK_PATH"* ]]; then
+                continue
+            fi
+        fi
+
+        # Everything else is unmanaged: real dirs, foreign symlinks, stale files
+        POLLUTION_ENTRIES+=("$name")
+    done
+
+    if [[ ${#POLLUTION_ENTRIES[@]} -gt 0 ]]; then
+        echo "  Unmanaged entries in $label: ${#POLLUTION_ENTRIES[@]}"
+        for entry in "${POLLUTION_ENTRIES[@]}"; do
+            if [[ -L "$target_dir/$entry" ]]; then
+                echo "    - $entry (symlink -> $(readlink "$target_dir/$entry"))"
+            elif [[ -d "$target_dir/$entry" ]]; then
+                echo "    - $entry (directory)"
+            else
+                echo "    - $entry (file)"
+            fi
+        done
+    fi
+}
+
+# --- Clean: remove unmanaged entries ---
+do_clean() {
+    echo "=== Scanning for pollution ==="
+    echo ""
+
+    local total_removed=0
+
+    for target_info in "$CLAUDE_SKILLS:Claude" "$CODEX_SKILLS:Codex"; do
+        local target_dir="${target_info%%:*}"
+        local label="${target_info##*:}"
+
+        echo "--- $label ($target_dir) ---"
+        detect_pollution "$target_dir" "$label"
+
+        if [[ ${#POLLUTION_ENTRIES[@]} -eq 0 ]]; then
+            echo "  Clean: no unmanaged entries"
+            echo ""
+            continue
+        fi
+
+        for entry in "${POLLUTION_ENTRIES[@]}"; do
+            local path="$target_dir/$entry"
+            if [[ -L "$path" ]]; then
+                run rm "$path"
+                log "Removed foreign symlink: $entry"
+            elif [[ -d "$path" ]]; then
+                run rm -rf "$path"
+                log "Removed unmanaged directory: $entry"
+            else
+                run rm "$path"
+                log "Removed unmanaged file: $entry"
+            fi
+            total_removed=$((total_removed + 1))
+        done
+        echo ""
+    done
+
+    # Clean stale Codex prompts from compound-engineering
+    local codex_prompts="$HOME/.codex/prompts"
+    if [[ -d "$codex_prompts" ]]; then
+        echo "--- Codex prompts ($codex_prompts) ---"
+        local prompts_removed=0
+        for f in "$codex_prompts"/*.md; do
+            [[ -f "$f" ]] || continue
+            local fname
+            fname="$(basename "$f")"
+            # Only remove compound-engineering generated prompts (ce-*.md pattern)
+            if [[ "$fname" == ce-*.md ]]; then
+                run rm "$f"
+                log "Removed plugin prompt: $fname"
+                prompts_removed=$((prompts_removed + 1))
+                total_removed=$((total_removed + 1))
+            fi
+        done
+        if [[ $prompts_removed -eq 0 ]]; then
+            echo "  Clean: no plugin prompts"
+        fi
+        echo ""
+    fi
+
+    echo "Total removed: $total_removed"
+    if [[ "$DRY_RUN" == "true" && $total_removed -gt 0 ]]; then
+        echo "(dry-run: nothing was actually removed)"
+    fi
 }
 
 # --- Check for skills not in any manifest ---
@@ -427,7 +593,7 @@ COMMAND="install"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        install|uninstall|status)
+        install|uninstall|status|clean)
             COMMAND="$1"
             shift
             ;;
@@ -452,4 +618,5 @@ case "$COMMAND" in
     install)   do_install ;;
     uninstall) do_uninstall ;;
     status)    do_status ;;
+    clean)     do_clean ;;
 esac
