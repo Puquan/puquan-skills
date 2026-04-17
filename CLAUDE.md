@@ -6,21 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A config repository for AI coding agents (Claude Code, OpenAI Codex CLI). Manages custom skills, rules, and harness configs using **Thin Harness, Fat Skills** architecture.
 
-Plugin-provided skills (compound-engineering, gstack) are NOT in this repo — they're managed by their respective plugins.
-
 ## Repository Structure
 
 ```
-library/      -> Custom skills (60 dirs, each with SKILL.md + optional references/)
-rules/        -> Global rules auto-loaded into Claude Code sessions
+library/
+  claude/  -> Claude Code 技能（每个技能逐个软链到 ~/.claude/skills/）
+  codex/   -> Codex 技能（每个技能逐个软链到 ~/.codex/skills/）
+rules/        -> Global rules (symlinked to both ~/.claude/rules and ~/.codex/rules)
   common/     -> Language-agnostic (git, testing, security, coding style)
   python/     -> Python-specific
   typescript/ -> TypeScript-specific
 hosts/        -> Thin harness configs per agent
   claude.md   -> Installed to ~/.claude/CLAUDE.md
   codex.md    -> Installed to ~/.codex/AGENTS.md
-manifests/    -> Per-agent skill selection
-  codex-include.txt -> Whitelist of Codex-compatible skills
 scripts/      -> install.sh manages per-agent per-skill symlinks
 ```
 
@@ -42,9 +40,10 @@ scripts/install.sh uninstall
 
 ### What install.sh does
 
-- **Claude**: Symlinks each skill from `library/` to `~/.claude/skills/`, plus gstack from `$GSTACK_PATH`. Copies `hosts/claude.md` to `~/.claude/CLAUDE.md`.
-- **Codex**: Symlinks only skills listed in `manifests/codex-include.txt`. Copies `hosts/codex.md` to `~/.codex/AGENTS.md`.
-- **Gemini**: Removes old symlink (no longer managed).
+- **Claude**: Symlinks each skill from `library/claude/` to `~/.claude/skills/`. Symlinks `rules/` to `~/.claude/rules`. Copies `hosts/claude.md` to `~/.claude/CLAUDE.md`.
+- **Codex**: Symlinks each skill from `library/codex/` to `~/.codex/skills/`. Symlinks `rules/` to `~/.codex/rules`. Copies `hosts/codex.md` to `~/.codex/AGENTS.md`.
+
+Symlink direction (`~/.claude/skills/foo → {repo}/library/claude/foo`) means edits in either location modify the same file — no explicit sync needed.
 
 ## SKILL.md Format
 
@@ -86,10 +85,9 @@ When creating or updating skills:
 
 ## Adding a New Skill
 
-1. Create `library/<skill-name>/SKILL.md` with frontmatter
-2. If Codex-compatible (no Claude-specific tools), add to `manifests/codex-include.txt`
-3. Run `scripts/install.sh install` to update symlinks
-4. Test in a fresh Claude Code session
+1. Create `library/claude/<skill-name>/SKILL.md` and/or `library/codex/<skill-name>/SKILL.md`
+2. Run `scripts/install.sh install` to update symlinks
+3. Test in a fresh Claude Code session
 
 ## Rules (rules/*.md)
 
