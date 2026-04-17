@@ -9,7 +9,7 @@ Before ANY commit:
 - [ ] XSS prevention (sanitized HTML)
 - [ ] CSRF protection enabled
 - [ ] Authentication/authorization verified
-- [ ] Rate limiting on all endpoints
+- [ ] Public, authenticated, or write-heavy endpoints have an explicit rate-limiting decision
 - [ ] Error messages don't leak sensitive data
 
 ## Secret Management
@@ -23,7 +23,7 @@ Before ANY commit:
 
 If security issue found:
 1. STOP immediately
-2. Use **security-reviewer** agent
+2. Conduct a focused security review for the affected changes.
 3. Fix CRITICAL issues before continuing
 4. Rotate any exposed secrets
 5. Review entire codebase for similar issues

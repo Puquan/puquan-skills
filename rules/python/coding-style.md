@@ -33,10 +33,10 @@ class Point(NamedTuple):
 
 ## Formatting
 
-- **black** for code formatting
-- **isort** for import sorting
-- **ruff** for linting
+- Follow the project's configured formatter and linter first
+- If the project does not define a Python toolchain, default to **ruff** for linting
+- Use **black** and **isort** only when the project already uses them or explicitly asks for them
 
 ## Reference
 
-See skill: `python-patterns` for comprehensive Python idioms and patterns.
+For supplemental examples and idioms, see skill: `python-patterns`.

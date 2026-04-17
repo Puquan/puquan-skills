@@ -9,17 +9,18 @@ paths:
 
 ## Framework
 
-Use **pytest** as the testing framework.
+Follow the repository's configured Python test stack first.
+If the project does not define one, prefer **pytest**.
 
 ## Coverage
 
 ```bash
-pytest --cov=src --cov-report=term-missing
+pytest --cov=<package_or_src_path> --cov-report=term-missing
 ```
 
 ## Test Organization
 
-Use `pytest.mark` for test categorization:
+Use `pytest.mark` for test categorization when the project relies on markers:
 
 ```python
 import pytest
@@ -35,4 +36,4 @@ def test_database_connection():
 
 ## Reference
 
-See skill: `python-testing` for detailed pytest patterns and fixtures.
+For optional deeper pytest guidance, see skill: `python-testing`.

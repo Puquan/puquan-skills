@@ -1,5 +1,16 @@
 # Coding Style
 
+## Rule Precedence
+
+Apply rules in this order:
+1. User instructions for the current task
+2. Repository or directory `AGENTS.md`
+3. Language-specific rules
+4. Common rules
+
+When a project already defines a formatter, linter, naming convention, or file layout, follow the
+project setting instead of forcing a common default.
+
 ## Immutability (CRITICAL)
 
 ALWAYS create new objects, NEVER mutate existing ones:
@@ -11,6 +22,26 @@ CORRECT: update(original, field, value) → returns new copy with change
 ```
 
 Rationale: Immutable data prevents hidden side effects, makes debugging easier, and enables safe concurrency.
+
+## Core Principles
+
+### KISS (Keep It Simple)
+
+- Prefer the simplest solution that actually works
+- Avoid premature optimization
+- Optimize for clarity over cleverness
+
+### DRY (Don't Repeat Yourself)
+
+- Extract repeated logic into shared functions or utilities
+- Avoid copy-paste implementation drift
+- Introduce abstractions when repetition is real, not speculative
+
+### YAGNI (You Aren't Gonna Need It)
+
+- Do not build features or abstractions before they are needed
+- Avoid speculative generality
+- Start simple, then refactor when the pressure is real
 
 ## File Organization
 
@@ -35,41 +66,28 @@ ALWAYS validate at system boundaries:
 - Use schema-based validation where available
 - Fail fast with clear error messages
 - Never trust external data (API responses, user input, file content)
-- Use `get(key) or default` instead of `get(key, default)` for JSONB/JSON data where values can be explicit null
 
-## Comments
+## Naming Conventions
 
-Explain WHY, not WHAT:
-- Comment non-obvious decisions and trade-offs
-- Self-documenting code preferred over comments
-- Never state the obvious (e.g. "increment counter")
+- Variables and functions: follow the current language and project convention
+- Booleans: prefer `is`, `has`, `should`, or `can` prefixes
+- Interfaces, types, and components: `PascalCase`
+- Constants: `UPPER_SNAKE_CASE`
+- Custom hooks: `camelCase` with a `use` prefix
 
-## Root Cause Over Fallback
+## Code Smells to Avoid
 
-When fixing issues, address the root cause, not the symptom:
-- Do NOT add fallbacks, default values, or defensive checks to mask upstream bugs
-- Ask "why is this value wrong/missing?" before adding a null check
-- A fallback is only justified at true system boundaries (external API, user input)
-- Internal code should be trusted — if it produces unexpected values, fix the source
+### Deep Nesting
 
-Before submitting non-trivial changes, pause and ask:
-- "Am I fixing the root cause or adding a band-aid?"
-- "Is there a more direct solution that eliminates the need for this fallback?"
-- Skip this for obvious, trivial fixes
+Prefer early returns over nested conditionals once the logic starts stacking.
 
-## Code Smell Detection
+### Magic Numbers
 
-Watch for and fix these anti-patterns:
-- **Deep nesting**: Use early returns instead of nested if/else
-- **Long functions**: Split into smaller, focused functions
-- **Magic numbers**: Extract to named constants
+Use named constants for meaningful thresholds, delays, and limits.
 
-## Bulk Rename / Replace Safety
+### Long Functions
 
-When using `replace_all` or bulk string replacements:
-- ALWAYS grep the result after replacement to verify no doubled substrings (e.g. `ErrorError`, `ServiceService`)
-- Check that the replacement target does not already contain the replacement string
-- For class/variable renames, search for ALL variants (imports, type hints, string literals, error messages) before replacing
+Split large functions into focused pieces with clear responsibilities.
 
 ## Code Quality Checklist
 
@@ -81,19 +99,3 @@ Before marking work complete:
 - [ ] Proper error handling
 - [ ] No hardcoded values (use constants or config)
 - [ ] No mutation (immutable patterns used)
-- [ ] No `type: ignore` comments (see below)
-
-## Type Ignore Ban (Python)
-
-NEVER use `# type: ignore` to suppress type checker errors:
-- Fix the root cause: wrong annotation, missing type, or incorrect code
-- If a third-party stub is wrong, use a properly typed wrapper
-- The only exception: a proven false positive in a third-party stub with no workaround, documented with a comment explaining why
-
-## Static vs Runtime Testing
-
-Don't write runtime tests for guarantees already enforced by the type checker:
-- Frozen dataclass immutability → Pyright prevents mutation statically
-- Enum exhaustiveness → Pyright catches missing cases
-- Type narrowing → Pyright validates at compile time
-- Runtime tests should verify behavior that cannot be caught statically
